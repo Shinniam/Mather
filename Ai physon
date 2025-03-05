@@ -1,0 +1,72 @@
+import json
+import io
+import base64
+import pytesseract
+from PIL import Image
+import sympy as sp
+
+def solve_equation(equation_str):
+    """
+    簡単な一変数方程式を解く。
+    例: 'x**2 - 4 = 0' という文字列から解を求める
+    """
+    try:
+        lhs, rhs = equation_str.split('=')
+        x = sp.symbols('x')
+        eq = sp.Eq(sp.sympify(lhs), sp.sympify(rhs))
+        solutions = sp.solve(eq, x)
+        return solutions
+    except Exception as e:
+        return str(e)
+
+def handler(request, response):
+    try:
+        # リクエストボディの JSON を解析
+        body = request.get_json()
+        # 直接入力の数式がある場合
+        equation_input = body.get("equation")
+        if equation_input:
+            solutions = solve_equation(equation_input)
+            result = {
+                "equation": equation_input,
+                "solutions": str(solutions)
+            }
+            response.status_code = 200
+            response.headers["Content-Type"] = "application/json"
+            return json.dumps(result)
+        
+        # 画像がアップロードされている場合 (Base64 エンコードされた文字列)
+        image_data = body.get("image")
+        if image_data:
+            image_bytes = base64.b64decode(image_data)
+            image = Image.open(io.BytesIO(image_bytes))
+            # OCR で画像からテキスト抽出
+            text = pytesseract.image_to_string(image, lang="eng")
+            
+            # テキストから '=' を含む行を抽出
+            equation_line = None
+            for line in text.splitlines():
+                if '=' in line:
+                    equation_line = line.strip()
+                    break
+            if not equation_line:
+                response.status_code = 400
+                return json.dumps({"error": "画像から数式が検出されませんでした。"})
+            
+            solutions = solve_equation(equation_line)
+            result = {
+                "extracted_text": text,
+                "equation": equation_line,
+                "solutions": str(solutions)
+            }
+            response.status_code = 200
+            response.headers["Content-Type"] = "application/json"
+            return json.dumps(result)
+        
+        # 入力が見つからなかった場合
+        response.status_code = 400
+        return json.dumps({"error": "有効な入力がありません。JSON ボディに 'equation' または 'image' キーを含めてください。"})
+    
+    except Exception as e:
+        response.status_code = 500
+        return json.dumps({"error": str(e)})
